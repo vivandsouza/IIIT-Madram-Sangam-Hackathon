@@ -1,0 +1,274 @@
+---
+title: "Sangam Hackathon"
+author: "Vivan Dsouza"
+date: "1 August 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## clear the work environment
+```{r}
+rm(list = ls(all=TRUE))
+```
+
+## read the files
+```{r}
+train_data = read.csv("Train.csv", header = T)
+sum(is.na(train_data))
+test_data = read.csv("Test.csv", header = T)
+sum(is.na(test_data))
+```
+
+```{r}
+
+date_time <- test_data$date_time
+
+```
+
+
+
+## Structure of the data
+```{r}
+str(train_data)
+```
+
+## Converting Date_time to date format and then converting to week days
+```{r}
+library(lubridate)
+
+train_data$date_time <- as.Date(train_data$date_time, format = "%Y-%m-%d %H:%M:%S")
+weekdays <- weekdays(as.POSIXct(train_data$date_time), abbreviate = F)
+train_data$date_time <- weekdays
+colnames(train_data)[colnames(train_data) == "date_time"] <- "Weekdays"
+
+## Converting weekdays to categorical
+train_data$Weekdays <- as.factor(train_data$Weekdays)
+
+## Test data
+test_data$date_time <- as.Date(test_data$date_time, format = "%Y-%m-%d %H:%M:%S")
+weekdays <- weekdays(as.POSIXct(test_data$date_time), abbreviate = F)
+test_data$date_time <- weekdays
+colnames(test_data)[colnames(test_data) == "date_time"] <- "Weekdays"
+test_data$Weekdays <- as.factor(test_data$Weekdays)
+
+```
+
+## Separating numerical and categorical data
+```{r}
+
+cat_data <- subset(train_data, select = c(Weekdays, is_holiday, weather_type, weather_description, traffic_volume))
+num_data <- subset(train_data, select = -c(Weekdays, is_holiday, weather_type, weather_description, traffic_volume))
+
+## test data
+cat_data_test <- subset(test_data, select = c(Weekdays, is_holiday, weather_type, weather_description))
+num_data_test <- subset(test_data, select = -c(Weekdays, is_holiday, weather_type, weather_description))
+
+```
+
+
+## Correlation plot
+```{r}
+library(corrplot)
+correlation_Xpairwise = cor(num_data)
+corrplot(cor(num_data, use = "complete.obs"), method = "number")
+
+```
+## observed Dew_point and visibility_in_miles are highly correlated
+
+## Check the skewness and kurtosis
+
+```{r}
+library(e1071)
+
+skewness(num_data$wind_speed)
+skewness(num_data$temperature)
+skewness(num_data$rain_p_h)
+skewness(num_data$snow_p_h)
+
+
+```
+
+## Log transformation
+```{r}
+
+num_data <- num_data + 1
+summary(num_data)
+
+```
+## Log transformation
+
+```{r}
+
+num_data_log <- log(num_data)
+
+```
+
+
+## Standardize the numerical columns
+```{r}
+library(caret)
+
+std_method <- preProcess(num_data_log, method = c("center", "scale"))
+num_data_std <- predict(std_method, num_data_log)
+
+## Test data
+std_method_test <- preProcess(num_data_test, method = c("center", "scale"))
+num_data_std_test <- predict(std_method_test, num_data_test)
+```
+
+## Combining the numerical and categorical attributes
+```{r}
+
+train <- data.frame(num_data_std, cat_data)
+dim(train)
+
+test <- data.frame(num_data_std_test, cat_data_test)
+dim(test)
+
+```
+
+## Split the train and validation data
+
+```{r}
+set.seed(123)
+
+train_rows <- sample(x = 1:nrow(train), size = 0.8*nrow(train))
+
+train_data1 <- train[train_rows, ]
+val_data <- train[-train_rows, ]
+
+dim(train_data1)
+dim(val_data)
+
+```
+
+## Basic Model
+```{r}
+model_basic <- lm(formula = traffic_volume ~., data = train_data1)
+summary(model_basic)
+```
+## Residual plots
+```{r}
+par(mfrow = c(2,2))
+
+plot(model_basic)
+
+```
+## Influencing observations
+
+```{r}
+lev= hat(model.matrix(model_basic))
+plot(lev)
+```
+```{r}
+
+new <- train_data1[lev>0.5, ]
+
+train_data_lev <- train_data1[-(lev>0.5), ]
+dim(train_data_lev)
+```
+
+## Cooks distance
+```{r}
+cook = cooks.distance(model_basic)
+plot(cook,ylab="Cook's distances")
+max=as.numeric(which.max(cook))
+
+max
+
+#points(max,cook[max],col='red', pch=19)
+```
+```{r}
+train_cook<-train_data_lev[-max,]
+dim(train_cook)
+
+```
+
+## Model building after removing the influencial points
+```{r}
+
+model_basic2 <- lm(formula = traffic_volume ~., data = train_cook)
+summary(model_basic2)
+
+```
+
+## Step AIC model
+```{r}
+library(MASS)
+
+model_aic <- stepAIC(model_basic2, direction = "both")
+
+```
+```{r}
+
+summary(model_aic)
+
+```
+```{r}
+
+par(mfrow = c(2,2))
+
+plot(model_aic)
+
+```
+```{r}
+
+library(car)
+vif(model_aic)
+
+```
+```{r}
+cor(train_data$visibility_in_miles, train_data$dew_point, use = "complete.obs")
+
+```
+```{r}
+names(train_data1)
+
+```
+```{r}
+
+model_basic3 <- lm(formula = traffic_volume ~ air_pollution_index + humidity + wind_speed + wind_direction + visibility_in_miles + temperature + rain_p_h + snow_p_h + clouds_all + Weekdays + is_holiday + weather_type + weather_description, data = train_data1)
+summary(model_basic3)
+
+```
+```{r}
+model_basic4 <- lm(formula = traffic_volume ~ humidity + wind_speed + wind_direction + temperature + rain_p_h + clouds_all + Weekdays + is_holiday + weather_type + weather_description, data = train_data1)
+summary(model_basic4)
+
+```
+```{r}
+
+preds_model <- predict(model_basic4, val_data[, !(names(val_data) %in% c("traffic_volume"))])
+
+preds_model_final <- predict(model_basic4, test_data)
+
+traffic_volume <- round(preds_model_final, 0)
+
+
+```
+
+## Evaluating the model
+
+```{r}
+
+library(DMwR)
+
+regr.eval(train_data1$traffic_volume, model_basic4$fitted.values)
+
+```
+```{r}
+
+regr.eval(val_data$traffic_volume, preds_model)
+
+```
+```{r}
+
+sub2 <- data.frame(date_time, traffic_volume)
+
+write.csv(sub2, "submission_2.csv", row.names = FALSE)
+
+```
+
